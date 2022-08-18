@@ -1,0 +1,848 @@
+---
+title: "Sommaire"
+output:
+  pdf_document: default
+  html_document:
+    toc: true
+    df_print: kable
+editor_options: 
+  chunk_output_type: inline
+geometry : margin=2cm
+always_allow_html: true
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  include = TRUE,
+  echo = FALSE,
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE, 
+  warning = FALSE, 
+  fig.align = "center", 
+  fig.width = 8,
+  fig.height = 4
+)
+```
+
+\tableofcontents
+\newpage
+
+```{r include=FALSE}
+# Packages utilisés
+library(forecast)
+library(MLmetrics)
+library(tseries)
+library(ggplot2)
+library(cowplot)
+library(tseries)
+library(plotly)
+library(zoo)
+library(IRdisplay)
+require(broom)
+library(xtable)
+library(gridExtra)
+source("ggCheckupRes.R")
+```
+
+# 1. Introduction
+
+## 1.1. Présentation des données
+
+```{r include=FALSE}
+data = read.csv("monthly-beer-production-in-austr.csv")
+head(data)
+
+mbp = ts(data[,'Monthly.beer.production'],frequency=12,start=1956)
+n = length(mbp)
+print(paste("Nombre d'observations : ",n))
+
+time = as.vector(data[,'Month'])
+print(c(time[1],time[n]))
+```
+Les données présentées dans notre rapport concernent la production mensuelle de bière (en mégalitres) en Australie entre janvier 1956 et août 1995 compris, soit $n=476$ observations. La série provient d'une base de données en libre accès sur le site [https://www.kaggle.com](https://www.kaggle.com/shenba/time-series-datasets?select=monthly-beer-production-in-austr.csv) et n'a pas de valeur manquante.
+
+```{r include=FALSE}
+nb_mois = (1995-1956)*12+8
+print(nb_mois)
+```
+
+```{r}
+Decomp = decompose(mbp, type="additive")
+maxF = max(Decomp$figure)
+minF = min(Decomp$figure)
+
+# Graphique de la série
+fig1 <- plot_ly(x = time(mbp), y = mbp, type = 'scatter', mode = 'lines', line = list(color = 'black'), name = "Données mensuelles", showlegend=TRUE) %>%
+  add_trace(y = Decomp$trend, type = 'scatter', mode = 'lines', name = "Tendance", line = list(color = 'red'),showlegend=TRUE) %>%
+  add_lines(y = Decomp$tren + maxF, name = "Translation de la tendance", line = list(color = 'blue', dash = 'dot')) %>%
+  add_lines(y = Decomp$tren + minF, line = list(color = 'blue', dash = 'dot'), showlegend = FALSE) %>% 
+  add_lines(x = c(1970,1970), y = c(min(mbp),max(mbp)), type = 'scatter', mode = 'lines', line = list(color = 'black', dash='dot'), showlegend = FALSE) %>%
+   layout(yaxis = (list(title = "Mégalitres", zerolinecolor = '#ffff', 
+           zerolinewidth = 2, gridcolor = 'ffff', titlefont = list(size = 10),tickfont = list(size=10))))
+
+# Boxplot des valeurs
+fig2 = plot_ly(y=mbp,type="box",name="Boxplot") %>%
+    layout(showlegend = TRUE)
+
+fig <- subplot(fig1, fig2, widths = c(0.8, 0.2),shareY=TRUE) %>%
+               layout(title = list(text = "Production mensuelle de bière en Australie", font = list(size = 10)),
+         legend = list(orientation = 'h', font = list(size = 9)),
+         plot_bgcolor='#e5ecf6', 
+         xaxis = list(
+           zerolinecolor = '#ffff', 
+           zerolinewidth = 2, 
+           gridcolor = 'ffff', 
+           tickfont = list(size=8),
+           titlefont = list(size = 9)), 
+         yaxis = list(title="Mégalitres",
+           zerolinecolor = '#ffff', 
+           zerolinewidth = 2, 
+           gridcolor = 'ffff', 
+           tickfont = list(size=8),
+           titlefont = list(size = 9)))
+        
+fig
+```
+
+```{r include=FALSE}
+i_rupt = which(time=="1975-01")
+print(i_rupt)
+
+print(min(mbp))
+i_min = which.min(mbp)
+print(time[i_min])
+
+print(max(mbp))
+i_max = which.max(mbp)
+print(time[i_max])
+```
+La représentation graphique de la série nous montre des données d'allure périodique, à tendance croissante jusqu'en 1975 environ, puis la tendance se stabilise, oscillant entre `r min(mbp[i_rupt:n])` et `r max(mbp[i_rupt:n])` mégalitres. La valeur minimale de la série est atteinte en juin 1956 avec une production de `r min(mbp)` mégalitres de bière, contre une valeur maximale de `r max(mbp)` mégalitres produits en décembre 1978. On note par ailleurs une moyenne globale de la série autour des `r round(mean(mbp))` mégalitres.
+
+On peut supposer de manière raisonnable que la période de cette série correspond à une année soit 12 mois (ou observations). Nous reviendrons plus en détail sur le motif saisonnier dans la partie suivante.
+
+On remarque également une augmentation de la variance et de l'amplitude des motifs périodiques à partir des années 70 ; la courbe rouge représente l'estimation de la tendance de la série à partir de la fonction $decompose$, les courbes bleues correspondent à cette tendance à laquelle on a ajouté la valeur maximale (`r round(maxF,2)`) et minimale (`r round(minF,2)`) du motif périodique moyen estimé par cette même fonction. Ces différences d'amplitudes ne semblent pas être dues à des valeurs aberrantes, comme nous le montre le boxplot ci-dessus. Le graphique ci-dessous correspond à la représentation du logarithme des données associé aux différentes courbes présentées précédemment. 
+
+```{r fig.height=2.5,fig.width=7.5}
+Lmbp = log(mbp)
+
+DecompL = decompose(Lmbp,type="additive")
+LmaxF = max(DecompL$figure)
+LminF = min(DecompL$figure)
+
+fig <- plot_ly(x = time(Lmbp), y = Lmbp, type = 'scatter', mode = 'lines', line = list(color = 'black'), name = "Logarithme de la série", showlegend = TRUE) %>%
+  add_trace(y = DecompL$trend, type = 'scatter', mode = 'lines', name = "Tendance", line = list(color = 'red'), showlegend = TRUE) %>%
+  add_lines(y = DecompL$tren + LmaxF, name = "Translation de la tendance", line = list(color = 'blue', dash = 'dot'), showlegend = TRUE) %>%
+  add_lines(y = DecompL$tren + LminF, line = list(color = 'blue', dash = 'dot'), showlegend = FALSE) %>% 
+   layout(title = list(text = "Production mensuelle de bière en Australie", 
+                             font = list(size = 10)),
+                legend = list(orientation = 'v', font = list(size = 9)),
+                yaxis = list(title = "Log(mégalitres)",
+                             zerolinecolor = '#ffff', 
+                             zerolinewidth = 2, 
+                             gridcolor = 'ffff', 
+                             titlefont = list(size = 9),
+                             tickfont = list(size=8)),
+                plot_bgcolor='#e5ecf6', 
+                xaxis = list(zerolinecolor = '#ffff',
+                             zerolinewidth = 2,
+                             gridcolor = 'ffff',
+                             tickfont = list(size=8)))
+
+fig 
+```
+
+On voit que les amplitudes des motifs saisonniers sont plus homogènes sur toute la série dans ce deuxième graphique. Sauf mention contraire, nous travaillerons donc sur le logarithme des données dans la suite de ce rapport.
+
+## 1.2. Étude du motif périodique
+
+L'observation de données mensuelles nous laisse présager une périodicité annuelle. Nous pouvons étudier d'une part les données année par année :
+```{r include=FALSE}
+a = ggseasonplot(ts(mbp[1:120],start=1956,frequency = 12), year.labels=TRUE, ylim=c(min(mbp),max(mbp))) +
+    xlab("Mois") +
+    ylab("Mégalitres") +
+    ggtitle("Production mensuelle de 1956 à 1965") +
+    theme(axis.title.x = element_text(size=9),axis.title.y = element_text(size=9),plot.title = element_text(size = 9))
+
+b = ggseasonplot(ts(mbp[121:240],start=1966,frequency = 12), year.labels=TRUE, ylim=c(min(mbp),max(mbp))) +
+    xlab("Mois") +
+    ylab("Mégalitres") +
+    ggtitle("Production mensuelle de 1966 à 1975") +
+    theme(axis.title.x = element_text(size=9),axis.title.y = element_text(size=9),plot.title = element_text(size = 9))
+
+c = ggseasonplot(ts(mbp[241:360],start=1976,frequency = 12), year.labels=TRUE, ylim=c(min(mbp),max(mbp))) +
+    xlab("Mois") +
+    ylab("Mégalitres") +
+    ggtitle("Production mensuelle de 1976 à 1985") +
+    theme(axis.title.x = element_text(size=9),axis.title.y = element_text(size=9),plot.title = element_text(size = 9))
+
+d = ggseasonplot(ts(mbp[360:n],start=1986,frequency = 12), year.labels=TRUE, ylim=c(min(mbp),max(mbp))) +
+    xlab("Mois") +
+    ylab("Mégalitres") +
+    ggtitle("Production mensuelle de 1986 à 1995") +
+    theme(axis.title.x = element_text(size=9),axis.title.y = element_text(size=9),plot.title = element_text(size = 9))
+
+plot_grid(a,b,c,d, ncol = 2, nrow = 2, label_size = 10)
+```
+
+```{r fig.width=8,fig.height=3}
+a = ggseasonplot(ts(mbp[1:240],start=1956,frequency = 12), year.labels=TRUE, ylim=c(min(mbp),max(mbp))) +
+    xlab("Mois") +
+    ylab("Mégalitres") +
+    ggtitle("Production mensuelle de 1956 à 1975") +
+    theme(axis.title.x = element_text(size=9),axis.title.y = element_text(size=9),plot.title = element_text(size = 9))
+  
+b = ggseasonplot(ts(mbp[241:n],start=1976,frequency = 12), year.labels=TRUE, ylim=c(min(mbp),max(mbp))) +
+    xlab("Mois") +
+    ggtitle("Production mensuelle de 1976 à 1995") +
+    theme(axis.title.x = element_text(size=9),axis.title.y = element_text(size=9),plot.title = element_text(size = 9))
+  
+plot_grid(a,b, ncol = 2, nrow = 1, label_size = 10)
+```
+
+Nous observons globalement une décroissance de la production sur la première moitié de l’année jusqu’en juin (excepté un pic de croissance au mois de mars) puis un forte croissance jusqu'à la fin de l’année. Ces observations se retrouvent dans le motif périodique estimé par la fonction $decompose$ avec une périodicité de 12 mois. 
+
+D'autre part, l'étude de l'autocovariance de la série nous montre clairement une périodicité de fréquence 12.
+
+```{r fig.width=6,fig.height=3}
+fig1 <- plot_ly(y = Decomp$figure, type = 'scatter', mode = 'lines+markers') %>%
+  layout(xaxis = (list(ticktext = month.abb, tickvals = 0:11, tickfont = list(size = 8))), yaxis = (list(tickfont = list(size=8))))
+
+fig2 = ggAcf(mbp,lag.max = 50)
+
+annotations = list( 
+  list( 
+    x = 0.2,  
+    y = 1.0,  
+    text = "Motif périodique",
+    xref = "paper",  
+    yref = "paper",  
+    xanchor = "center",  
+    yanchor = "bottom",  
+    showarrow = FALSE,
+    font = list(size = 11)),  
+  list( 
+    x = 0.8,  
+    y = 1,  
+    text = "Autocorrélation de la série",
+    xref = "paper",  
+    yref = "paper",  
+    xanchor = "center",  
+    yanchor = "bottom",  
+    showarrow = FALSE,
+    font = list(size = 11)))  
+
+fig = subplot(fig1,ggplotly(fig2),margin=0.05) %>%
+  layout(title = list(text = ""), annotations = annotations)
+fig
+```
+
+## 1.3. Tendance générale de la série
+
+```{=tex}
+Revenons sur l'étude globale de la série, après passage au logarithme. La tendance générale des données peut être approximée par une régression quadratique (1) ou, plus simplement, linéaire (2) en fonction du temps. Les modèles précédents sont décrits par les formules suivantes :
+\begin{align} 
+Lmbp &= \beta_0 + \beta_1 * temps  + \beta_2 * temps_2 \\
+Lmbp &= \alpha_0 + \alpha_1 * temps
+\end{align}
+$Lmbp$ représente ici le logarithme de nos données ($mbp$ pour \textit{Monthly Beer Production}), $temps$ et $temps_2$ faisant respectivement référence au temps d'étude des données et au carré de ce vecteur temps.
+```
+
+```{r fig.height=3,fig.width=7}
+temps = 1:n
+temps_2 = temps^2
+RegLin = lm(Lmbp~temps)
+RegQua = lm(Lmbp~temps+temps_2)
+
+fig <- plot_ly(x = time(Lmbp), y = Lmbp, type = 'scatter', mode = 'lines', line = list(color = 'black'), name = "Logarithme des données") %>%
+  add_lines(y =fitted(RegQua), name = "Tendance quadratique", line = list(color = 'blue')) %>%
+  add_lines(y =fitted(RegLin), name = "Tendance linéaire", line = list(color = 'red')) %>%
+  layout(title = list(text = "Production mensuelle de bière en Australie", font = list(size = 10)),
+         plot_bgcolor='#e5ecf6', 
+         xaxis = list(zerolinecolor = '#ffff', 
+           zerolinewidth = 2, 
+           gridcolor = 'ffff', 
+           titlefont = list(size = 9),
+           tickfont = list(size=8)), 
+         yaxis = list(title="Log(mégalitres)",
+           zerolinecolor = '#ffff', 
+           zerolinewidth = 2, 
+           gridcolor = 'ffff', 
+           titlefont = list(size = 9),
+           tickfont = list(size=8)),
+legend = list(orientation = 'h', font = list(size = 9)))
+
+fig
+```
+On voit graphiquement que la régression linéaire n'est pas très adaptée à nos données tandis que le premier modèle (bleu) semble assez proche de la tendance générale. Les tests statistiques effectués dans le cadre d'une régression évaluent des hypothèses de significativité des différents coefficients :
+```{=tex}
+- Significativité globale du modèle quadratique par la F-statistique :
+\begin{center}
+	$\mathcal{H}_0 : "\beta_1=\beta_2=0$" vs $\mathcal{H}_1$ : "$\beta_1 \neq 0$ ou $\beta_2 \neq 0$"
+\end{center}
+- Significativité du c\oe{}fficient $j = 1,2$ : 
+\begin{center}
+	$\mathcal{H}_0 : "\beta_j = 0"$ vs $\mathcal{H}_1 : "\beta_j \neq 0"$
+\end{center}
+```
+
+Observons les résultats de ces tests sur nos différentes régressions :
+```{r}
+s_qua = summary(RegQua)
+s_lin = summary(RegLin)
+DF1 = cbind(coef(s_qua))
+rownames(DF1) <- c("$\\beta_0$", "$\\beta_1$","$\\beta_2$")
+           
+knitr::kable(DF1, caption = "Coefficients de la régression quadratique (1)",format.args = list(scientific = TRUE))
+
+DF2 = rbind(glance(s_qua)[c("statistic","p.value","r.squared","adj.r.squared")],glance(s_lin)[c("statistic","p.value","r.squared","adj.r.squared")])
+rownames(DF2) <- c("Reg. Quadratique","Reg. Linéaire")
+knitr::kable(DF2, caption = "Test de Fisher et $R^2$ des régressions (1) et (2)",digits=3,format.args = list(scientific = FALSE))
+```
+
+La régression quadratique est globalement significative, la p-value du test de Fisher étant largement inférieure à 5%. De même, les coefficients estimés par les deux régressions sont tous significatifs au seuil de 5% par rejet de l'hypothèse de nullité des coefficients. On note tout de même une estimation très proche de zéro pour les coefficients, mais rappelons que nous nous trouvons à l'échelle logarithmique, ce qui explique ces faibles valeurs. Le $R^2$ ajusté est nettement meilleur pour la régression quadratique que pour la régression linéaire, ce qui confirme l'impression visuelle de meilleure adéquation aux données.
+
+```{r include=FALSE}
+anova(RegLin,RegQua)
+```
+
+L'analyse de variances sur les deux modèles nous donne une p-value égale à `r anova(RegLin,RegQua)[[2,6]]` correspondant au test de Fisher des modèles emboîtés :
+```{=tex}
+\begin{center}
+$\mathcal{H}_0 : "\beta_2 = 0"$ vs $\mathcal{H}_1 : "\beta_2 \neq 0"$
+\end{center}
+```
+
+Nous pouvons donc rejeter fermement l'hypothèse nulle : le terme $temps_2$ est bien significatif. En conclusion, le modèle quadratique semble bien meilleur que la régression linaire simple.
+
+Une première idée de modélisation serait donc d'associer le motif périodique à notre régression quadratique et envisager un modèle ARMA sur les résidus de cette régression, représentés ci-dessous :
+
+```{r include=FALSE}
+pred_RegQua = rep(DecompL$figure,40)[1:n]
+pred = ts(pred_RegQua + fitted(RegQua),start=1956,frequency=12)
+
+res = Lmbp - pred
+
+fig <- plot_ly(x = time(Lmbp), y = Lmbp, type = 'scatter', mode = 'lines', line = list(color = 'black'), name = "Logarithme des données") %>%
+  add_trace(y=pred,line=list(color="red"),name="Modèle quadratique + Motif périodique") %>%
+  layout(title = list(text = "Production mensuelle de bière en Australie", font = list(size = 10)),
+         xaxis = list(
+           titlefont = list(size = 9),
+           tickfont = list(size=8)), 
+         yaxis = list(title="Log(mégalitres)",
+           titlefont = list(size = 9),
+           tickfont = list(size=8)),
+legend = list(orientation = 'h', font = list(size = 9)))
+
+fig
+```
+
+
+```{r fig.width=10, fig.height=2}
+fig <- plot_ly(x = time(Lmbp), y = res, type="scatter", mode="lines", line=list(color="black")) %>%
+  layout(xaxis = (list(title="Années",
+                  titlefont = list(size = 9),
+                  tickfont = list(size=8))),
+         title = (list(text="Graphique des résidus",font = list(size = 10))),
+         yaxis = list(title="Log(mégalitres)",
+           titlefont = list(size = 9),
+           tickfont = list(size=8)))
+fig
+```
+Graphiquement, les résidus ne semblent clairement pas stationnaires : la moyenne n'est pas constante au cours du temps. De plus, la régression quadratique suggère une tendance inéluctable à la baisse, ce qui ne semble pas correspondre à la réalité : la production de bière en Australie ne tends pas vers un arrêt progressif de toute activité.
+
+Nous pourrions envisager de différencier nos résidus pour étudier l'éventualité d'une modélisation par un SARIMA mais il semble plus raisonnable d'envisager que notre série présente une rupture dans les années 70, date à partir de laquelle la tendance globale de nos données semble osciller entre baisse et augmentation de la production annuelle. Nous allons donc chercher à estimer cette date de rupture afin d'ajuster de meilleurs modèles à nos données.
+
+## 1.4. Date de rupture
+
+Afin de déterminer la date de rupture, nous allons séparer notre série en deux parties : la première contiendra les observations d'indices compris entre 1 et R, avec R un entier à valeur dans $[1,n]$, et la seconde partie contiendra le reste des valeurs (soit celles comprises entre $R+1$ et $n$, on rappelle que $n=476$). On estime ensuite un modèle de régression linéaire sur chacune des deux parties puis on calcule la MSE (*Mean Squared Error : Erreur quadratique moyenne*) induite par cette modélisation et dont voici la formule :
+```{=tex}
+\begin{equation*}
+	MSE = \frac{\sum_{i=1}^{R} [Lmbp_i - (\alpha_0+\alpha_1*temps_i)]^2 + \sum_{i=R+1}^{n} [Lmbp_i - (\beta_0+\beta_1*temps_i)]^2}{n}
+\end{equation*}
+où $\alpha$ et $\beta$ sont respectivement les vecteurs des coefficients des régressions avant et après la date de rupture $R$.
+```
+
+```{r include=FALSE}
+MSERupture = function(data){
+  n = length(data)
+  MSE = c()
+  
+  for(r in 1:n){
+    T1 = 1:r
+    data1 = data[T1]
+    reg1 = lm(data1~T1)
+    MSE1 = sum(reg1$residuals**2)
+    
+    T2 = (r+1):n
+    data2 = data[T2]
+    reg2 = lm(data2~T2) 
+    MSE2 = sum(reg2$residuals**2)
+    
+    MSE = c(MSE,(MSE1+MSE2)/n)
+  }
+  
+  return (MSE)
+}
+
+MSE = MSERupture(Lmbp)
+R = which.min(MSE)
+print(R)
+print(time[R])
+
+fig <- plot_ly(x=1:n , y=MSE, type = 'scatter', mode = 'lines', name = "Evolution de la MSE") %>%
+  add_markers(x = R, y=MSE[R], name="Minimum", marker = list(symbol="x",size = 10)) %>%
+  add_trace(x = R, y = c(0.015,MSE[R]), type = 'scatter', mode = 'lines',line = list(color = 'orange', dash='dot'), showlegend = FALSE) %>%
+  layout(title = list(text = "Evolution de la MSE totale en fonction de la date de rupture", font = list(size = 12)),
+         xaxis = list(title="Indices du temps",
+           ticktext=c(seq(0,200,50),R,seq(250,450,50)),
+           tickvals= c(seq(0,200,50),R,seq(250,450,50)),
+           titlefont = list(size = 10),
+           tickfont = list(size=10)), 
+         yaxis = list(title="MSE",
+           titlefont = list(size = 10),
+           tickfont = list(size=10)),
+legend = list(font = list(size = 9)))
+
+fig
+```
+
+En faisant varier la valeur de $R$, on obtient une MSE minimale lorsque $R=213$, ce qui correspond au mois de septembre 1973. Dans la suite de ce rapport, nous utiliserons cette date comme date de rupture.
+
+```{r}
+Lmbp_preR = ts(Lmbp[1:R],start=c(1956,1),frequency = 12)
+Lmbp_postR = ts(Lmbp[(R+1):n],start=c(1973,10),frequency = 12)
+
+time_preR = time(Lmbp_preR)
+time_postR = time(Lmbp_postR)
+
+reglin1 = lm(Lmbp_preR~time_preR)
+reglin2 = lm(Lmbp_postR~time_postR)
+```
+
+```{r fig.height=3.5}
+fig <- plot_ly(x = time_preR, y = Lmbp_preR, type = 'scatter', mode = 'lines', line = list(color = 'orange'), name = "Données pré-ruptures") %>%
+  add_lines(x=time_preR,y=fitted(reglin1), line = list(color = 'black'),showlegend = FALSE) %>%
+  add_lines(x=time_postR,y=fitted(reglin2), line = list(color = 'black'),showlegend = FALSE) %>% 
+  add_lines(x=time(Lmbp)[R] ,y=c(min(Lmbp),max(Lmbp)), name = "Date de rupture", line = list(color = 'black', dash='dot')) %>%
+  add_trace(x = time_postR, y = Lmbp_postR, type = 'scatter', mode = 'lines', line = list(color = 'blue'), name = "Données post-ruptures") %>%
+   layout(title = list(text = "Visualisation de la date de rupture", font = list(size = 10)),
+          xaxis = (list(titlefont = list(size = 9), tickfont = list(size=8))),
+          yaxis=(list(title="Log(mégalitres)",titlefont = list(size = 9), tickfont = list(size=8))),
+          legend = list(orientation = 'h', font = list(size = 9)))
+
+fig
+```
+
+# 2. Étude de la partie post-rupture
+
+```{r fig.width=7,fig.height=3}
+fig <- plot_ly(x = time_postR, y=Lmbp_postR, type = 'scatter', mode = 'lines', name = "Données post-ruptures") %>%
+  add_lines(y = fitted(reglin2), name = "Régression linéaire", line = list(color = 'red')) %>%
+   layout(title = list(text = "Série post-rupture",font = list(size = 10)), 
+xaxis = (list(titlefont = list(size = 9), tickfont = list(size=8))), yaxis=(list(title="Log(mégalitres)",titlefont = list(size = 9), tickfont = list(size=8))),legend = list(orientation = 'h', font = list(size = 9)))
+
+fig
+```
+
+## 2.1. Stationnarité
+
+D'après le graphique, la série post-rupture présente une tendance décroissante et ne peut donc être considérée comme stationnaire. Nous pouvons effectuer les tests suivants pour confirmer cette intuition :
+```{=tex}
+- Test de Dickey-Fuller Augmenté (ADF) :
+\begin{center}
+	$\mathcal{H}_0$ : "La trajectoire est issue d'un processus non-stationnaire" vs $\mathcal{H}_1$ : "$\bar{\mathcal{H}_0}$"
+\end{center}
+- Test de Kwiatkwoski-Phillips-Schmidt-Shin (KPSS) :
+\begin{center}
+	$\mathcal{H}_0$ : "La trajectoire est issue d'un processus stationnaire" vs $\mathcal{H}_1$ : "$\bar{\mathcal{H}_0}$"
+\end{center}
+```
+
+```{r warning = TRUE}
+adf.test(Lmbp_postR)
+kpss.test(Lmbp_postR)
+```
+Ainsi, d'après le test ADF nous pouvons rejeter l'hypothèse nulle de non-stationnarité au seuil de 5%. Or, d'après le test KPSS, nous pouvons également rejeter l'hypothèse nulle (stationnarité des données) au seuil de 5%, ce qui contredit le résultat précédent. A noter que la valeur de la p-value étant assez proche de 0.05, la fiabilité du résultat peut être remise en question.
+
+En conclusion, nous pouvons émettre des doutes sur la stationnarité des données ci-dessus.
+
+## 2.2. Analyse des autocorrélations
+
+L'analyse des autocorrélations (ACF) de la série post-rupture nous montre une périodicité annuelle des données, comme relevée précédemment. Les valeurs estimées pour la fonction d'autocorrélations partielles (PACF) semblent rentrer dans le couloir de significativité à partir du douzième *lag*, ce qui est en accord avec la théorie des ARMA. Etant donné la périodicité relevée dans l'estimation de l'ACF, nous pouvons tenter de modéliser nos données par un modèle SARIMA, ce que nous exposerons dans la partie suivante.
+
+```{r fig.height=1.8}
+a = ggAcf(Lmbp_postR,lag.max = 50) +
+  ggtitle("Autocorrélations de la série post-rupture") +
+  theme(axis.title.x = element_text(size=9),axis.title.y = element_text(size=9),plot.title = element_text(size = 9))
+  
+b = ggPacf(Lmbp_postR,lag.max = 50) +
+  ggtitle("Autocorrélations partielles") +
+  theme(axis.title.x = element_text(size=9),axis.title.y = element_text(size=9),plot.title = element_text(size = 9))
+  
+plot_grid(a,b)
+``` 
+
+# 3. Définition des modèles
+
+Nos analyses nous amènent donc à définir trois modèles SARIMA basés sur les différenciations suivantes :
+```{=tex}
+- 1er modèle : $(I-B)$ afin de supprimer la tendance linéaire \\
+- 2ème modèle : $(I-B^{12})$ afin de supprimer la tendance saisonnière \\
+- 3ème modèle : $(I-B)(I-B^{12})$ afin de supprimer à la fois la tendance linéaire et la tendance saisonnière
+```
+
+
+## 3.1. Modélisation
+Les différenciations de la série selon les opérateurs ci-dessus nous donnent les trois graphiques suivants :
+
+```{r fig.hight=3,fig.width=8}
+Lmbp_postRd = diff(Lmbp_postR)
+Lmbp_postRD = diff(Lmbp_postR,12)
+Lmbp_postRDd = diff(diff(Lmbp_postR,12))
+
+fig1 <- plot_ly(x=time(Lmbp_postRd),y =Lmbp_postRd,name="(I-B)", type = 'scatter', mode = 'lines',line = list(color = 'blue'))
+
+fig2 <- plot_ly(x=time(Lmbp_postRD),y =Lmbp_postRD,name="(I-B^12)", type = 'scatter', mode = 'lines',line = list(color = 'red'))
+
+fig3 <- plot_ly (x=time(Lmbp_postRDd),y =Lmbp_postRDd,name="(I-B)(I-B^12)", type = 'scatter', mode = 'lines',line = list(color = 'green'))
+
+fig <- subplot(fig1, fig2, fig3, nrows=3,shareX = T) %>%
+  layout(title = list(text = "Différenciations de la série post-rupture",font = list(size = 10)),
+         xaxis = (list(titlefont = list(size = 9), tickfont = list(size=8))), yaxis=(list(title="Log(mégalitres)",titlefont = list(size = 9), tickfont = list(size=8))),
+         legend = list(font = list(size = 9)))
+
+fig
+```
+Nous avons ainsi supprimé la tendance linéaire dans les trois modélisations qui semblent toutes trois stationnaires avec néanmoins un doute sur la stabilité de la variance dans la troisième série, voire la deuxième. Observons les résultats des tests ADF et KPSS :
+```{r include=FALSE,warning = TRUE}
+adf.test(Lmbp_postRd)
+kpss.test(Lmbp_postRd)
+adf.test(Lmbp_postRD)
+kpss.test(Lmbp_postRD)
+adf.test(Lmbp_postRDd)
+kpss.test(Lmbp_postRDd)
+```
+```{r}
+Df = rbind(rep("<0.01",each=3),rep(">0.1",each=3))
+colnames(Df) <-c("(I-B)","$(I-B^{12})$","$(I-B)(I-B^{12})$")
+rownames(Df) <-c("ADF","KPSS")
+
+knitr::kable(Df, caption = "Résultats des tests de stationnarité")
+```
+Les tests ADF nous conduisent tous trois à rejeter l'hypothèse nulle de non-stationnarité des données, tandis que le test KPSS nous indique de ne pas rejeter l'hypothèse de stationnarité des données dans les trois cas de figure. 
+
+```{=tex}
+Le choix des couples (d,D)=(1,0), (d,D)=(0,1) et (d,D)=(1,1) semble donc pertinent pour une modélisation SARIMA. Nous utiliserons la commande \textit{auto.arima} du package \textit{forecast} pour déterminer les nombres $p$, $q$, $P$ et $Q$ de paramètres ainsi que leurs estimations. Nous testerons la significativité des coefficients $\beta_i$ par le test de Student:
+\begin{equation*}
+	\mathcal{H}_0 : "\beta_i=0" \ vs \ \mathcal{H}_1 : "\beta_i \neq 0"
+\end{equation*}
+Le test de Student nous conduit à rejeter $\mathcal{H}_0$ au seuil de confiance $\alpha$ si la statistique $t$ = $\frac{\hat{\beta_i}}{\hat{\sigma}_{\beta_i}}$ est strictement supérieure en valeur absolue au quantile d'ordre $\alpha$ de la loi normale centrée réduite.
+```
+
+### 3.1.1. Modèle 1
+
+```{r echo=TRUE}
+auto.arima(Lmbp_postR,d=1,D=0)
+```
+```{r include=FALSE}
+M1_est = auto.arima(Lmbp_postR,d=1,D=0)
+M1_est
+M1_coeff = M1_est$coef
+M1_se = sqrt(diag(M1_est$var.coef))
+print("Statistique de Student :")
+M1_coeff/M1_se
+```
+La statistique pour la significativité des coefficients correspond donc à l'estimation du coefficient divisé par son écart-type, statistique qui ne doit pas être comprise entre -1.96 et 1.96 pour que le coefficient soit significatif au seuil de 5%. On voit qu'ici tous les coefficients correspondent à ce critère même si nous pouvons émettre un doute sur la significativité du paramètre $ar1$ au seuil de 1%. Nous pouvons donc tenter d'estimer notre premier modèle à l'aide d'un SARIMA(0,1,1)x(2,0,0)[12] comme ceci :
+```{r echo=TRUE}
+Mod1 = Arima(Lmbp_postR,order=c(0,1,1),seasonal = list(order=c(2,0,0),period=12))
+```
+```{r}
+M1_coeff = Mod1$coef
+M1_se = sqrt(diag(Mod1$var.coef))
+t_stat = M1_coeff/M1_se
+M1_res = rbind(M1_coeff,M1_se,t_stat)
+M1_res
+```
+Les coefficients sont bien tous significatifs. Nous procédons de la même manière par la suite : recherche du meilleur modèle par la fonction $auto.arima$ avec le couple de paramètres (d,D) correspondant puis réduction du modèle par élimination progressive des coefficients non significatifs pour les paramètres de plus haut rang.
+
+### 3.1.2. Modèle 2
+
+```{r include=FALSE}
+M2_est = auto.arima(Lmbp_postR,d=0,D=1)
+M2_est
+M2_coeff = M2_est$coef
+M2_se = sqrt(diag(M2_est$var.coef))
+print("Statistique de Student :")
+M2_coeff/M2_se
+```
+```{r include=FALSE}
+# on commence par réduire le nombre de paramètres du processus saisonnier
+M2_est = auto.arima(Lmbp_postR,d=0,D=1,max.Q=1)
+M2_est
+M2_coeff = M2_est$coef
+M2_se = sqrt(diag(M2_est$var.coef))
+print("Statistique de Student :")
+M2_coeff/M2_se
+```
+Le deuxième modèle sera donc un SARIMA(0,0,0)x(1,1,1)[12] avec une tendance linéaire :
+```{r echo=TRUE}
+Mod2 = Arima(Lmbp_postR,order=c(0,0,0),seasonal = list(order=c(1,1,1),period=12),include.drift=TRUE)
+```
+
+```{r}
+M2_coeff = Mod2$coef
+M2_se = sqrt(diag(Mod2$var.coef))
+t_stat = M2_coeff/M2_se
+M2_res = rbind(M2_coeff,M2_se,t_stat)
+M2_res
+```
+### 3.1.3. Modèle 3
+```{r include=FALSE}
+M3_est = auto.arima(Lmbp_postR,d=1,D=1)
+M3_est
+M3_coeff = M3_est$coef
+M3_se = sqrt(diag(M3_est$var.coef))
+print("Statistique de Student :")
+M3_coeff/M3_se
+```
+```{r include=FALSE}
+M3_est = auto.arima(Lmbp_postR,d=1,D=1,max.Q=1,max.P=1)
+M3_est
+M3_coeff = M3_est$coef
+M3_se = sqrt(diag(M3_est$var.coef))
+print("Statistique de Student :")
+M3_coeff/M3_se
+```
+```{r include=FALSE}
+# on tente de retirer le paramètre ar3 du modèle (doute sur significativité à 1%)
+M3_est = auto.arima(Lmbp_postR,max.p=2,d=1,D=1,max.Q=1,max.P=1)
+M3_est
+M3_coeff = M3_est$coef
+M3_se = sqrt(diag(M3_est$var.coef))
+print("Statistique de Student :")
+M3_coeff/M3_se
+```
+Le modèle 3 sera basé sur un SARIMA(2,1,2)x(0,1,1)[12] :
+```{r echo=TRUE}
+Mod3 = Arima(Lmbp_postR,order=c(2,1,2),seasonal = list(order=c(0,1,1),period=12))
+```
+
+```{r}
+M3_coeff = Mod3$coef
+M3_se = sqrt(diag(Mod3$var.coef))
+t_stat = M3_coeff/M3_se
+M3_res = rbind(M3_coeff,M3_se,t_stat)
+M3_res
+```
+## 3.2. Etude des résidus
+
+```{=tex}
+Dans cette partie, nous cherchons à étudier si les résidus de nos trois modèles peuvent être assimilés à un bruit blanc gaussien par des appréciations graphiques et différents tests statistiques :
+- Normalité des résidus : Tests de Shapiro et de Kolmogorov-Smirnov
+\begin{center}
+	$\mathcal{H}_0$ : "Les données suivent une distribution normale" vs $\mathcal{H}_1$ : "$\bar{\mathcal{H}_0}$"
+\end{center}
+- Bruit blanc : Test de Ljung-Box
+\begin{center}
+	$\mathcal{H}_0$ : "Les données ne présentent pas d'auto-corrélation d'ordre 1 à r" vs $\mathcal{H}_1$ : "$\bar{\mathcal{H}_0}$" \\
+\end{center}
+```
+
+```{r fig.height = 12,fig.width=12}
+M1r = format(c(shapiro.test(Mod1$residuals)$p.value,
+        ks.test(Mod1$residuals,"pnorm",mean(Mod1$residuals),sd(Mod1$residuals))$p.value,
+        Box.test(Mod1$residuals,lag=12,type="Ljung-Box")$p.value),scientific = T,digits=3)
+
+M2r = format(c(shapiro.test(Mod2$residuals)$p.value,
+        ks.test(Mod2$residuals,"pnorm",mean(Mod2$residuals),sd(Mod2$residuals))$p.value,
+        Box.test(Mod2$residuals,lag=12,type="Ljung-Box")$p.value),scientific = T,digits=3)
+
+M3r = format( c(shapiro.test(Mod3$residuals)$p.value,
+        ks.test(Mod3$residuals,"pnorm",mean(Mod3$residuals),sd(Mod3$residuals))$p.value,
+        Box.test(Mod3$residuals,lag=12,type="Ljung-Box")$p.value),scientific = T,digits=3)
+
+Dfr = data.frame(list(M1r,M2r,M3r))
+colnames(Dfr) <- c("Modèle 1","Modèle 2","Modèle 3")
+rownames(Dfr) <- c("Shapiro","Kolmogorov","Ljung-Box")
+
+CR1=ggcheckupRes(Mod1$residuals,"blue",1)
+CR2=ggcheckupRes(Mod2$residuals,"red",2)
+CR3=ggcheckupRes(Mod3$residuals,"green3",3)
+p1 <- tableGrob(head(Dfr))
+
+plot_grid(CR1,CR2,CR3,p1,ncol = 2, nrow = 2, label_size = 10)
+```
+
+Les tests de Shapiro et Kolmogorov s'accordent dans le non-rejet de l'hypothèse de normalité des résidus du premier modèle. En revanche, le test de Shapiro rejette fermement la normalité des résidus des modèles 2 et 3 tandis que les résultats du test de Kolmogorov, plus sensible aux grands échantillons, semble plus douteux dans ces deux cas. 
+D'un point de vue graphique, les trois modèles admettent la majorité de leurs résidus centrés réduits entre -2 et 2. Cependant, les histogrammes et diagrammes quantile-quantiles des modèles 2 et 3 semblent moyennement assimilable à une distribution normale tandis que les résidus du modèle 1 montrent une meilleure adéquation à une loi gaussienne.
+
+Le test du Ljung-Box rejette fermement l'hypothèse de non auto-corrélation des résidus de l'ordre 1 à 12 pour les trois modèles. Graphiquement cependant, nous n'observons pas d'auto-corrélations entre les résidus que ce soit dans le nuage de points ou l'analyse des ACF et PACF.
+
+En conclusion, le modèle 1 semble être le plus pertinent du point de vue de l'analyse des résidus puisque ce sont les seuls qui semblent suivre une loi normale. Cependant, nos trois modèles semblent cohérents vis-à-vis de l'absence de corrélations dans les résidus.
+
+## 3.3. Erreur de prédiction
+
+Nous cherchons ici à estimer l'erreur de prédiction de chacun de nos modèles en les appliquant à notre série tronquée de sa dernière période et en calculant l'erreur quadratique moyenne sur l'estimation de cette dernière période. La MSE a d'abord été calculée sur le logarithme de nos données puis, dans un deuxième temps, sur notre série d'origine. La transformation s'est effectuée de la manière suivante :
+```{=tex}
+Soit $\hat{Lmbp}_{t}$ le prédicteur de $Lmbp_{t}$ correspondant au logarithme des données. On a alors, sous l'hypothèse de normalité des résidus (modèle 1) :
+\begin{center}
+$\hat{mbp}_{n+1} = e^{\hat{Lmbp}_{n+1}+\frac{\hat{\sigma}^{2}}{2}}$ où $mbp$ fait référence à la série originale et ${\sigma^{2}}$ à l'écart-type de la série.
+\end{center}
+Dans les modèles 2 et 3, le prédicteur de la série d'origine est donné par : \\
+\begin{center}
+$\hat{mbp}_{n+1} = e^{\hat{Lmbp}_{n+1}}*\frac{1}{n}\sum_{k=1}^{n} e^{\epsilon_{k}}$ où $\epsilon_{k}$ correspond au $k^{ieme}$ résidu du modèle.
+\end{center}
+```
+
+```{r}
+n2 = length(Lmbp_postR)
+Lmbp_postRT=Lmbp_postR[1:(n2-12)]
+NLmbp_postR=Lmbp_postR[(n2-11):n2]
+NTs=mbp[(n-11):n]
+
+mois=c(month.abb[9:12],month.abb[1:8])
+
+Mod1T = Arima(Lmbp_postRT,order=c(0,1,1),seasonal = list(order=c(2,0,0),period=12))
+Mod2T = Arima(Lmbp_postRT,order=c(0,0,0),seasonal = list(order=c(1,1,1),period=12), include.drift=TRUE)
+Mod3T = Arima(Lmbp_postRT,order=c(2,1,2),seasonal = list(order=c(0,1,1),period=12))
+
+# Prédictions sur le logarithme de la dernière période
+Pred1 = forecast(Mod1T,h=12)
+Pred2 = forecast(Mod2T,h=12)
+Pred3 = forecast(Mod3T,h=12)
+
+MSE1=format(MSE(NLmbp_postR,Pred1$mean),scientific = T,digits=3)
+MSE2=format(MSE(NLmbp_postR,Pred2$mean),scientific = T,digits=3)
+MSE3=format(MSE(NLmbp_postR,Pred3$mean),scientific = T,digits=3)
+
+# Prédictions sur la dernière période de la série d'origine
+Pred1_T = exp(Pred1$mean+Mod1T$sigma2/2) # résidus gaussien
+Pred2_T = exp(Pred2$mean)*mean(exp(Mod2T$residuals)) 
+Pred3_T = exp(Pred3$mean)*mean(exp(Mod3T$residuals))
+
+MSE1_T=format(MSE(NTs,Pred1_T),digits=5)
+MSE2_T=format(MSE(NTs,Pred2_T),digits=5)
+MSE3_T=format(MSE(NTs,Pred3_T),digits=5)
+
+DfMSE = data.frame(c(MSE1,MSE1_T),c(MSE2,MSE2_T),c(MSE3,MSE3_T))
+colnames(DfMSE) <- c("Modèle 1","Modèle 2","Modèle 3")
+rownames(DfMSE) <- c("MSE Lmbp","MSE mbp")
+knitr::kable(DfMSE, caption = "MSE avant et après transformation")
+```
+
+```{r include=FALSE}
+# Graphiques des prédictions sur le logarithme des données
+
+fig1 <- plot_ly(y = Pred1$lower[,2], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),showlegend = FALSE)%>%
+  add_trace(y = Pred1$lower[,1], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(0, 0, 255, 0.4)",name = "IC 95%",showlegend = TRUE)%>%
+  add_trace(y = Pred1$upper[,1], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(0, 0, 255, 0.2)",name = "IC 80%",showlegend = TRUE)%>%
+  add_trace(y = Pred1$upper[,2], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(0, 0, 255, 0.4)",showlegend = FALSE)%>%
+  add_trace(y = NLmbp_postR, type = 'scatter', mode = 'lines', name = "Logarithme de la série",line = list(color = 'black'))%>%
+  add_trace(y = Pred1$mean, type = 'scatter', mode = 'lines',name = "Modèle 1",line = list(color = 'blue'), showlegend = TRUE)
+
+fig2 <- plot_ly(y = Pred2$lower[,2], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),showlegend = FALSE)%>%
+  add_trace(y = Pred2$lower[,1], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(255, 0, 0, 0.4)",name = "IC 95%",showlegend = FALSE)%>%
+  add_trace(y = Pred2$upper[,1], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(255, 0, 0, 0.2)",name = "IC 80%",showlegend = FALSE)%>%
+  add_trace(y = Pred2$upper[,2], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(255, 0, 0, 0.4)",showlegend = FALSE)%>%
+  add_trace(y = NLmbp_postR, type = 'scatter', mode = 'lines', name = "Logarithme de la série",line = list(color = 'black'))%>%
+  add_trace(y = Pred2$mean, type = 'scatter', mode = 'lines',name = "Modèle 2",line = list(color = 'red'), showlegend = TRUE)
+
+
+fig3 <- plot_ly(y = Pred3$lower[,2], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),showlegend = FALSE)%>%
+  add_trace(y = Pred3$lower[,1], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(0, 255, 0, 0.5)",name = "IC 95%",showlegend = FALSE)%>%
+  add_trace(y = Pred3$upper[,1], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(0, 255, 0, 0.2)",name = "IC 80%",showlegend = FALSE)%>%
+  add_trace(y = Pred3$upper[,2], type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(0, 255, 0, 0.5)",showlegend = FALSE)%>%
+  add_trace(y = NLmbp_postR, type = 'scatter', mode = 'lines', name = "Logarithme de la série",line = list(color = 'black'))%>%
+  add_trace(y = Pred3$mean, type = 'scatter', mode = 'lines',name = "Modèle 3",line = list(color = 'green'), showlegend = TRUE)
+fig <- subplot(fig1, fig2, fig3, shareY = T) %>%
+   layout(title = list(text = "Prédiction de la dernière période du logarithme de la série",font = list(size = 10)),
+          xaxis = list(ticktext=mois,tickvals=0:11,tickfont=list(size=8)),
+          xaxis2 = list(ticktext=mois,tickvals=0:11,tickfont=list(size=8)),
+          xaxis3 = list(ticktext=mois,tickvals=0:11,tickfont=list(size=8)),
+          legend = list(font = list(size = 9)),
+          yaxis=(list(title="Mégalitres",titlefont = list(size = 9), tickfont = list(size=8))))
+
+fig
+```
+
+```{r fig.height = 3}
+# Graphiques des prédictions sur la série originale
+
+fig1 <- plot_ly(y = NTs, type = 'scatter', mode = 'lines', name = "Série d'origine",line = list(color = 'black'), showlegend = TRUE) %>%
+  add_trace(y = exp(Pred1$lower[,2]), type = 'scatter', mode = 'lines',line = list(color = 'transparent'),showlegend = FALSE)%>%
+  add_trace(y = exp(Pred1$lower[,1]), type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(0, 0, 255, 0.4)",name = "IC 95%",showlegend = TRUE)%>%
+  add_trace(y = exp(Pred1$upper[,1]), type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(0, 0, 255, 0.2)",name = "IC 80%",showlegend = TRUE)%>%
+  add_trace(y = exp(Pred1$upper[,2]), type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(0, 0, 255, 0.4)",showlegend = FALSE)%>%
+  add_trace(y = Pred1_T, type = 'scatter', mode = 'lines',name = "Modèle 1",line = list(color = 'blue'), showlegend = TRUE)
+
+fig2 <- plot_ly(y = exp(Pred2$lower[,2]), type = 'scatter', mode = 'lines',line = list(color = 'transparent'),showlegend = FALSE)%>%
+  add_trace(y = exp(Pred2$lower[,1]), type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(255, 0, 0, 0.4)",name = "IC 95%",showlegend = FALSE)%>%
+  add_trace(y = exp(Pred2$upper[,1]), type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(255, 0, 0, 0.2)",name = "IC 80%",showlegend = FALSE)%>%
+  add_trace(y = exp(Pred2$upper[,2]), type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(255, 0, 0, 0.4)",showlegend = FALSE)%>%
+  add_trace(y = NTs, type = 'scatter', mode = 'lines', name = "Série originale",line = list(color = 'black'))%>%
+  add_trace(y = Pred2_T, type = 'scatter', mode = 'lines',name = "Modèle 2",line = list(color = 'red'), showlegend = TRUE)
+
+fig3 <- plot_ly(y = exp(Pred3$lower[,2]), type = 'scatter', mode = 'lines',line = list(color = 'transparent'),showlegend = FALSE)%>%
+  add_trace(y = exp(Pred3$lower[,1]), type = 'scatter', mode = 'lines',line = list(color = 'transparent',dash='dot'),fill="tonexty",fillcolor="rgba(0, 255, 0, 0.5)",name = "IC 95%",showlegend = FALSE)%>%
+  add_trace(y = exp(Pred3$upper[,1]), type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(0, 255, 0, 0.2)",name = "IC 80%",showlegend = FALSE)%>%
+  add_trace(y = exp(Pred3$upper[,2]), type = 'scatter', mode = 'lines',line = list(color = 'transparent'),fill="tonexty",fillcolor="rgba(0, 255, 0, 0.5)",showlegend = FALSE)%>%
+  add_trace(y = NTs, type = 'scatter', mode = 'lines', name = "Série originale",line = list(color = 'black'))%>%
+  add_trace(y = Pred3_T, type = 'scatter', mode = 'lines',name = "Modèle 3",line = list(color = 'green'), showlegend = TRUE)
+
+fig <- subplot(fig1, fig2, fig3, shareY = T) %>%
+   layout(title = list(text = "Prédiction de la dernière période de la série originale",font = list(size = 10)),
+          xaxis = list(ticktext=mois,tickvals=0:11,tickfont=list(size=8)),
+          xaxis2 = list(ticktext=mois,tickvals=0:11,tickfont=list(size=8)),
+          xaxis3 = list(ticktext=mois,tickvals=0:11,tickfont=list(size=8)),
+          legend = list(font = list(size = 9)),
+          yaxis=(list(title="Mégalitres",titlefont = list(size = 9), tickfont = list(size=8))))
+
+fig
+```
+
+Ainsi, le premier modèle est celui qui minimise la MSE de la prédiction et dont l'ensemble des valeurs de la série se situe dans l'intervalle de confiance à 95% et même 80%. Etant donné l'ensemble de notre analyse, nous choisissons de retenir le premier modèle qui semble être le plus adapté à la prédiction de nos données. Dans notre dernière partie, nous tenterons de prédire la production mensuelle de bière pour les années 1996 et 1997.
+
+# 4. Conclusion
+
+```{=tex}
+Le modèle retenu est donc un SARIMA(0,1,1)x(2,0,0)[12] dont l'écriture est déterminée par l'équation suivante :
+\begin{equation*}
+(I - B)(I - \alpha_1 B^{12} - \alpha_2 B^{24}) Lmbp_t = (I + \theta_1 B) \epsilon_t \\
+\end{equation*}
+où les $\alpha_i$ correspondent aux coefficients $sar1$ et $sar2$, et $\theta_1$ est estimé par le coefficient $ma1$ de la fonction $Arima$.
+```
+
+```{r}
+LPred1 = forecast(Mod1,h=24)
+NPred1 = exp(LPred1$mean+Mod1$sigma2/2)
+
+fig1 <- plot_ly(x= 49:n, y = mbp[49:n], type = 'scatter', mode = 'lines',name = "Série originale",line = list(color = 'black', width=1)) %>%
+  add_trace(x=(n+1):(n+24),y =NPred1, type = 'scatter', mode = 'lines',name = "Prédictions du modèle 1",line = list(color = 'blue')) %>%
+  add_trace(x=(n+1):(n+24),y = exp(LPred1$lower[,2]), type = 'scatter', mode = 'lines',line = list(color='transparent'),showlegend = FALSE) %>%
+  add_trace(x=(n+1):(n+24),y = exp(LPred1$upper[,2]), type = 'scatter', mode = 'lines',line = list(color='transparent'), fill="tonexty", fillcolor="rgba(0, 0, 255, 0.2)", showlegend = TRUE, name = "IC 95%") %>%
+     layout(title = list(text = "Prédictions du modèle retenu sur les années 1996 et 1997",font = list(size = 10)),
+          xaxis = list(ticktext = c(seq(1960,1990,10),1995,1997), tickvals= c(seq(49,409,120),469,n+17), tickfont=list(size=8)),
+          yaxis=(list(title="Mégalitres",titlefont = list(size = 9), tickfont = list(size=8))),
+          legend = list(x=0.01,y =0.9, font = list(size = 9)))
+
+fig1
+```
+
+```{r fig.height=3,fig.width=6}
+dates = c("Sep-95","Jan-96","Jan-97")
+
+fig2 <- plot_ly(x=time(NPred1),y =exp(LPred1$lower[,2]), type = 'scatter', mode = 'lines',line = list(color='transparent'), showlegend = FALSE)%>%
+  add_trace(x=time(NPred1),y =exp(LPred1$lower[,1]), type = 'scatter', mode = 'lines',line = list(color='transparent'),fill="tonexty",fillcolor="rgba(0, 0, 255, 0.4)",name = "IC 95%",showlegend = TRUE)%>%
+  add_trace(x=time(NPred1),y = exp(LPred1$upper[,1]), type = 'scatter', mode = 'lines',line = list(color='transparent'),fill="tonexty",fillcolor="rgba(0, 0, 255, 0.2)",name = "IC 80%",showlegend = TRUE) %>%
+  add_trace(x=time(NPred1),y = exp(LPred1$upper[,2]), type = 'scatter', mode = 'lines',line = list(color='transparent'),fill="tonexty",fillcolor="rgba(0, 0, 255, 0.4)", showlegend = FALSE)%>%
+  add_trace(x=time(NPred1),y = NPred1, type = 'scatter', mode = 'lines',name = "Prédictions du modèle 1",line = list(color = 'blue'), showlegend = TRUE) %>%
+  layout(title = list(text = "Prédictions du modèle retenu",font = list(size = 10)),
+         xaxis = list(ticktext=as.character(dates),tickvals=time(NPred1)[c(1,5,17)], tickfont=list(size=8)),
+         yaxis=(list(title="Mégalitres",titlefont = list(size = 9), tickfont = list(size=8))),
+         legend = list(font = list(size = 9)))
+fig2
+```
+L'estimation des deux années supplémentaires semble en accord avec le motif saisonnier de la série estimé par la fonction $decompose$ au début de notre rapport. On retrouve une forte croissance à partir de septembre jusqu'à la fin de l'année, puis une décroissance jusqu'en juillet à l'exception du mois de mars où la production est en hausse. On remarque tout de même l'apparition d'un deuxième pic de production au mois de mai.
+
+Pour améliorer ce modèle, nous pourrions envisager de prendre en considération de nouvelles variables comme la consommation mensuelle de bière en Australie, les exportations australiennes mensuelles de bière, ... L'ajout de ces informations permettrait peut-être une meilleure prédiction de la tendance générale de nos données.
